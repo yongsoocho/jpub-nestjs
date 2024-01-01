@@ -1,9 +1,22 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpException,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+  Req,
+  Res,
+} from '@nestjs/common';
 import { AppService } from './app.service';
 import { posts as PostEntity, users as UserEntity } from '@prisma/client';
 import { UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
+import { Request, Response } from 'express';
 
 @Controller()
 export class AppController {
@@ -15,13 +28,24 @@ export class AppController {
   }
 
   @Get('/post/:postId')
-  getPostWithPostId(@Param('postId') postId: string): PostEntity {
+  getPostWithPostId(@Param('postId') postId: string) {
     return this.appService.getPostWithPostId(postId);
   }
 
   @Post('/post')
-  savePost(@Body() payload: Omit<PostEntity, 'id' | 'createdAt'>) {
-    return this.appService.savePost(payload);
+  savePost(
+    @Body() payload: Pick<PostEntity, 'title' | 'subTitle' | 'content'>,
+    @Req()
+    req: Request & { session: Record<'user', UserEntity & { loginAt: Date }> },
+  ) {
+    if (!req?.session?.user) {
+      throw new HttpException('please login', HttpStatus.FORBIDDEN);
+    }
+
+    return this.appService.savePost({
+      ...payload,
+      authorId: req.session.user.id,
+    });
   }
 
   @Post('/image')
@@ -30,7 +54,7 @@ export class AppController {
       storage: diskStorage({
         destination: './images',
         filename: (req, file, callback) => {
-          callback(null, `${Date.now}_${file.originalname}`);
+          callback(null, `${Date.now()}_${file.originalname}`);
         },
       }),
       fileFilter: (req, file, callback) => {
@@ -46,7 +70,60 @@ export class AppController {
   }
 
   @Post('/login')
-  login(@Body() payload: Omit<UserEntity, 'id'>) {
-    return this.appService.login(payload);
+  async login(
+    @Body() payload: Omit<UserEntity, 'id'>,
+    @Req()
+    req: Request & {
+      session: Record<
+        'user',
+        {
+          id: string;
+          name: string;
+          loginAt: Date;
+        }
+      >;
+    },
+  ) {
+    const user = await this.appService.login(payload);
+    req.session.user = user;
+    return user;
+  }
+
+  @Get('/login')
+  async sessionLogin(
+    @Req()
+    req: Request & {
+      session: Record<
+        'user',
+        {
+          id: string;
+          name: string;
+          loginAt: Date;
+        }
+      >;
+    },
+  ) {
+    if (!req?.session?.user) {
+      throw new HttpException('login please', HttpStatus.UNAUTHORIZED);
+    }
+
+    return req?.session?.user;
+  }
+
+  @Delete('/login')
+  deleteSession(
+    @Req()
+    req: Request & {
+      session: Record<
+        'user',
+        {
+          id: string;
+          name: string;
+          loginAt: Date;
+        }
+      >;
+    },
+  ) {
+    req.session.destroy(function () {});
   }
 }
